@@ -16,9 +16,27 @@ def get_matches(image1, image2) -> typing.Tuple[
     kp2, descriptors2 = sift.detectAndCompute(img2_gray, None)
 
     bf = cv2.BFMatcher()
-    matches_1_to_2: typing.Sequence[typing.Sequence[cv2.DMatch]] = bf.knnMatch(descriptors1, descriptors2, k=2)
 
-    # YOUR CODE HERE
+    # Find matches using k-nearest neighbors (k=2) for k-ratio test
+    matches_1_to_2 = bf.knnMatch(descriptors1, descriptors2, k=2)
+    matches_2_to_1 = bf.knnMatch(descriptors2, descriptors1, k=2)
+
+    # Define k-ratio
+    k = 0.75
+
+    # Apply k-ratio test
+    good_matches_1_to_2 = [m for m, n in matches_1_to_2 if m.distance < k * n.distance]
+    good_matches_2_to_1 = [m for m, n in matches_2_to_1 if m.distance < k * n.distance]
+
+    # Create sets of pairs for the mutual match check
+    pairs_1_to_2 = {(m.queryIdx, m.trainIdx): m for m in good_matches_1_to_2}
+    pairs_2_to_1 = {(m.trainIdx, m.queryIdx) for m in good_matches_2_to_1}
+
+    # Find mutual matches
+    mutual_pairs = pairs_2_to_1.intersection(pairs_1_to_2.keys())
+    mutual_matches = [pairs_1_to_2[pair] for pair in mutual_pairs]
+
+    return kp1, kp2, mutual_matches
 
 
 def get_second_camera_position(kp1, kp2, matches, camera_matrix):
@@ -40,8 +58,23 @@ def triangulation(
         kp2: typing.Sequence[cv2.KeyPoint],
         matches: typing.Sequence[cv2.DMatch]
 ):
-    pass
-    # YOUR CODE HERE
+    # Create projection matrix for camera 1
+    proj_matrix1 = camera_matrix @ np.hstack((camera1_rotation_matrix, camera1_translation_vector))
+
+    # Create projection matrix for camera 2
+    proj_matrix2 = camera_matrix @ np.hstack((camera2_rotation_matrix, camera2_translation_vector))
+
+    # Extract matched keypoints from matches
+    points1 = np.array([kp1[match.queryIdx].pt for match in matches])
+    points2 = np.array([kp2[match.trainIdx].pt for match in matches])
+
+    # Perform triangulation to obtain 3D points in homogeneous coordinates
+    points_4d_homogeneous = cv2.triangulatePoints(proj_matrix1, proj_matrix2, points1.T, points2.T)
+
+    # Convert homogeneous coordinates to 3D Euclidean coordinates
+    points_3d = (points_4d_homogeneous[:3] / points_4d_homogeneous[3]).T
+
+    return points_3d
 
 
 # Task 4
@@ -57,8 +90,13 @@ def resection(
 
 
 def convert_to_world_frame(translation_vector, rotation_matrix):
-    pass
-    # YOUR CODE HERE
+    # Camera orientation in world coordinates is the transpose of the rotation matrix
+    world_rotation_matrix = rotation_matrix.T
+
+    # Camera position in world coordinates: -R^T * t
+    world_position = -world_rotation_matrix @ translation_vector
+
+    return world_position, world_rotation_matrix
 
 
 def visualisation(
