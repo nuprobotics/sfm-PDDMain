@@ -58,20 +58,14 @@ def triangulation(
         kp2: typing.Sequence[cv2.KeyPoint],
         matches: typing.Sequence[cv2.DMatch]
 ):
-    # Create projection matrix for camera 1
     proj_matrix1 = camera_matrix @ np.hstack((camera1_rotation_matrix, camera1_translation_vector))
-
-    # Create projection matrix for camera 2
     proj_matrix2 = camera_matrix @ np.hstack((camera2_rotation_matrix, camera2_translation_vector))
 
-    # Extract matched keypoints from matches
     points1 = np.array([kp1[match.queryIdx].pt for match in matches])
     points2 = np.array([kp2[match.trainIdx].pt for match in matches])
 
-    # Perform triangulation to obtain 3D points in homogeneous coordinates
     points_4d_homogeneous = cv2.triangulatePoints(proj_matrix1, proj_matrix2, points1.T, points2.T)
 
-    # Convert homogeneous coordinates to 3D Euclidean coordinates
     points_3d = (points_4d_homogeneous[:3] / points_4d_homogeneous[3]).T
 
     return points_3d
@@ -85,8 +79,22 @@ def resection(
         matches,
         points_3d
 ):
-    pass
-    # YOUR CODE HERE
+    kps_image1, kps_image2, refined_matches = get_matches(image1, image2)
+    point_map = {match.queryIdx: points_3d[i] for i, match in enumerate(matches)}
+    object_points = []
+    image_points = []
+    for match in refined_matches:
+        point_idx = match.queryIdx
+        if point_idx in point_map:
+            object_points.append(point_map[point_idx])
+            image_points.append(kps_image2[match.trainIdx].pt)
+    object_points = np.array(object_points)
+    image_points = np.array(image_points)
+    _, rotation_vec, translation_vec, _ = cv2.solvePnPRansac(
+        object_points, image_points, camera_matrix, np.zeros(5)
+    )
+    rotation_matrix, _ = cv2.Rodrigues(rotation_vec)
+    return rotation_matrix, translation_vec
 
 
 def convert_to_world_frame(translation_vector, rotation_matrix):
