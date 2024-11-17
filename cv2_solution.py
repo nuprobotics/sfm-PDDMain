@@ -16,9 +16,27 @@ def get_matches(image1, image2) -> typing.Tuple[
     kp2, descriptors2 = sift.detectAndCompute(img2_gray, None)
 
     bf = cv2.BFMatcher()
-    matches_1_to_2: typing.Sequence[typing.Sequence[cv2.DMatch]] = bf.knnMatch(descriptors1, descriptors2, k=2)
 
-    # YOUR CODE HERE
+    # Find matches using k-nearest neighbors (k=2) for k-ratio test
+    matches_1_to_2 = bf.knnMatch(descriptors1, descriptors2, k=2)
+    matches_2_to_1 = bf.knnMatch(descriptors2, descriptors1, k=2)
+
+    # Define k-ratio
+    k = 0.75
+
+    # Apply k-ratio test
+    good_matches_1_to_2 = [m for m, n in matches_1_to_2 if m.distance < k * n.distance]
+    good_matches_2_to_1 = [m for m, n in matches_2_to_1 if m.distance < k * n.distance]
+
+    # Create sets of pairs for the mutual match check
+    pairs_1_to_2 = {(m.queryIdx, m.trainIdx): m for m in good_matches_1_to_2}
+    pairs_2_to_1 = {(m.trainIdx, m.queryIdx) for m in good_matches_2_to_1}
+
+    # Find mutual matches
+    mutual_pairs = pairs_2_to_1.intersection(pairs_1_to_2.keys())
+    mutual_matches = [pairs_1_to_2[pair] for pair in mutual_pairs]
+
+    return kp1, kp2, mutual_matches
 
 
 def get_second_camera_position(kp1, kp2, matches, camera_matrix):
@@ -40,8 +58,17 @@ def triangulation(
         kp2: typing.Sequence[cv2.KeyPoint],
         matches: typing.Sequence[cv2.DMatch]
 ):
-    pass
-    # YOUR CODE HERE
+    proj_matrix1 = camera_matrix @ np.hstack((camera1_rotation_matrix, camera1_translation_vector))
+    proj_matrix2 = camera_matrix @ np.hstack((camera2_rotation_matrix, camera2_translation_vector))
+
+    points1 = np.array([kp1[match.queryIdx].pt for match in matches])
+    points2 = np.array([kp2[match.trainIdx].pt for match in matches])
+
+    points_4d_homogeneous = cv2.triangulatePoints(proj_matrix1, proj_matrix2, points1.T, points2.T)
+
+    points_3d = (points_4d_homogeneous[:3] / points_4d_homogeneous[3]).T
+
+    return points_3d
 
 
 # Task 4
@@ -52,13 +79,32 @@ def resection(
         matches,
         points_3d
 ):
-    pass
-    # YOUR CODE HERE
+    kps_image1, kps_image2, refined_matches = get_matches(image1, image2)
+    point_map = {match.queryIdx: points_3d[i] for i, match in enumerate(matches)}
+    object_points = []
+    image_points = []
+    for match in refined_matches:
+        point_idx = match.queryIdx
+        if point_idx in point_map:
+            object_points.append(point_map[point_idx])
+            image_points.append(kps_image2[match.trainIdx].pt)
+    object_points = np.array(object_points)
+    image_points = np.array(image_points)
+    _, rotation_vec, translation_vec, _ = cv2.solvePnPRansac(
+        object_points, image_points, camera_matrix, np.zeros(5)
+    )
+    rotation_matrix, _ = cv2.Rodrigues(rotation_vec)
+    return rotation_matrix, translation_vec
 
 
 def convert_to_world_frame(translation_vector, rotation_matrix):
-    pass
-    # YOUR CODE HERE
+    # Camera orientation in world coordinates is the transpose of the rotation matrix
+    world_rotation_matrix = rotation_matrix.T
+
+    # Camera position in world coordinates: -R^T * t
+    world_position = -world_rotation_matrix @ translation_vector
+
+    return world_position, world_rotation_matrix
 
 
 def visualisation(
